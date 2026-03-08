@@ -1,0 +1,15 @@
+[package]
+name = "snitool"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.60", features = ["derive"] }
+futures = "0.3.32"
+hickory-resolver = "0.25.2"
+reqwest = { version = "0.13", features = ["json", "stream"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_with = "3.17.0"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1.18", features = ["io-util"] }
+tokio-util = { version = "0.7.18", features = ["io"] }
