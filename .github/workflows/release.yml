@@ -7,6 +7,8 @@ jobs:
   build-and-upload:
     name: Build for ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write     
     strategy:
       matrix:
         include:
@@ -39,13 +41,16 @@ jobs:
       - name: Archive artifacts
         shell: bash
         run: |
+      - name: Archive artifacts
+        shell: bash
+        run: |
           ASSET_NAME="${{ env.BINARY_NAME }}-${{ matrix.suffix }}"
+          RELEASE_DIR=$(pwd)/target/release
           
-          cd target/release
           if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            powershell Compress-Archive -Path "${{ env.BINARY_NAME }}.exe" -DestinationPath "../../${ASSET_NAME}.zip"
+            powershell Compress-Archive -Path "$RELEASE_DIR/${{ env.BINARY_NAME }}.exe" -DestinationPath "${{ github.workspace }}/${ASSET_NAME}.zip"
           else
-            tar -czvf "../../${ASSET_NAME}.tar.gz" "${{ env.BINARY_NAME }}"
+            tar -czvf "${{ github.workspace }}/${ASSET_NAME}.tar.gz" -C "$RELEASE_DIR" "${{ env.BINARY_NAME }}"
           fi
 
       - name: Create Release
@@ -54,6 +59,7 @@ jobs:
           tag_name: v${{ env.PROJECT_VERSION }}
           name: Release v${{ env.PROJECT_VERSION }}
           draft: true
+          fail_on_unmatched_files: false
           files: |
             *.tar.gz
             *.zip
