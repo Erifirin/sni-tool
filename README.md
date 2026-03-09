@@ -1,6 +1,6 @@
 # SNI Tool
 
-> ![NOTE] В процессе разработки
+> [!NOTE] В процессе разработки
 
 Инструмент для поиска "правильного" SNI (wSNI).
 
@@ -9,16 +9,16 @@
 Прежде всего вам понадобится актуальный `asn.csv`. Положите его рядом
 с `snitool`. Также вы можете попытаться собрать `asn.csv` самостоятельно:
 
-    ```sh
-    snitool db build
-    ```
+```sh
+snitool db build
+```
 
 После этого вы сможете искать ASN, CIDR и wSNI по целевому ip или хосту:
 
-    ```sh
-    snitool lookup asn <ip or host>
-    snitool loopup wsni <ip or host>
-    ```
+```sh
+snitool lookup asn <ip or host>
+snitool loopup wsni <ip or host>
+```
 
 Например:
 
