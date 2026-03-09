@@ -1,19 +1,14 @@
 use std::{
     collections::{HashMap, HashSet},
-    fmt::{Display, Write},
     fs::File,
-    io::{BufRead, BufReader, BufWriter},
+    io::{BufWriter, Write},
     net::IpAddr,
-    path::Path,
     rc::Rc,
     str::FromStr,
 };
 
 use clap::{Args, Parser, Subcommand};
-use hickory_resolver::{ResolveError, TokioResolver, proto::rr::domain};
 use tokio_stream::StreamExt;
-
-use crate::dns::resolve_ips_batch_stream;
 
 mod cheburcheck;
 mod cymru;
@@ -21,8 +16,6 @@ mod db;
 mod dns;
 mod hackertarget;
 mod parsers;
-
-const IPS_DEFAULT_LIMIT: usize = 10;
 
 /// CLI
 #[derive(Parser, Debug)]
@@ -39,17 +32,23 @@ struct Cli {
 // ls wsni --asn
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Lookup commands
+    /// Local database management commands.
+    #[command(arg_required_else_help = true)]
+    Db(DbArgs),
+
+    /// Lookup commands: ip, asn, whitelisted sni, etc
     #[command(arg_required_else_help = true)]
     Lookup(LookupArgs),
+
+    /// Commands allows to list data from local database (if exists).
+    #[command(arg_required_else_help = true)]
     Ls(ListArgs),
-    Dev,
 }
 
 #[derive(Args, Debug)]
 struct LookupArgs {
     #[command(subcommand)]
-    lookup_command: LookupCommand,
+    command: LookupCommand,
 }
 
 #[derive(Debug, Subcommand)]
@@ -107,13 +106,35 @@ enum ListCommand {
     },
 }
 
+#[derive(Args, Debug)]
+struct DbArgs {
+    #[command(subcommand)]
+    command: DbCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum DbCommand {
+    /// Build (or rebuild) local database.
+    Build,
+
+    /// Fetch database from public source.
+    Fetch,
+}
+
+//-----------------------------------------------------------------------------
 // Main
+//-----------------------------------------------------------------------------
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Lookup(args) => match args.lookup_command {
+        Commands::Db(args) => match args.command {
+            DbCommand::Build => db_build().await,
+            DbCommand::Fetch => todo!(),
+        },
+        Commands::Lookup(args) => match args.command {
             LookupCommand::IP { domain, limit } => lookup_ip(domain, limit).await,
             LookupCommand::ASN { target, limit } => lookup_asn(target, limit).await,
             LookupCommand::WSNI { target, limit } => lookup_wsni(target, limit).await,
@@ -121,67 +142,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Ls(args) => match args.command {
             ListCommand::WSNI { asn, limit } => ls_wsni(asn, limit),
         },
-        Commands::Dev => {
-            db_build().await;
-        }
     }
-
-    // let resp = reqwest::get("https://httpbin.org/ip")
-    //     .await?
-    //     .json::<HashMap<String, String>>()
-    //     .await?;
-    // println!("{resp:#?}");
-
-    // let rs = get_ip("sli.dev").await;
-    // match rs {
-    //     Ok(ip) => {
-    //         println!("{ip:#?}");
-    //     }
-    //     Err(msg) => {
-    //         println!("{msg}");
-    //     }
-    // }
-
-    // let response = resolver.lookup_ip("www.example.com.").await.unwrap();
-    // println!("{response:#?}");
-    //
-    // for addr in response.iter() {
-    //     println!("addr: {addr:?}");
-    //     if let Some(a) = addr.to_ip() {
-    //         println!("ip: {a}");
-    //     }
-    // }
-
-    // let zero_ip = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
-    // let mut ips_buf = [zero_ip; 4];
-    //
-    // let dns_resolver = dns::create_resolver();
-    // let ips = resolve_ips(&dns_resolver, "4pda.to.", &mut ips_buf).await?;
-    //
-    // ips.iter().for_each(|ip| println!("IP: {ip}"));
-
-    // let ips: Vec<IpAddr> = vec![
-    //     "68.22.187.5".parse().unwrap(),
-    //     "207.229.165.18".parse().unwrap(),
-    //     "198.6.1.65".parse().unwrap(),
-    // ];
-    // resolve_ips(&ips).await?;
-
-    // let domains = [
-    //     "google.com",
-    //     "microsoft.com",
-    //     "mail.ru",
-    //     "googleapis.com",
-    //     "youtube.com",
-    //     "dzen.ru",
-    //     "apple.com",
-    //     "gstatic.com",
-    //     "office.com",
-    // ];
-
-    // let domains = get_domains_list("short.csv")?;
-    // get_domain_info(&dns_resolver, &domains).await?;
-    // let rs = resolve_ips_batch_parallel(&dns_resolver, domains.iter()).await;
 
     Ok(())
 }
@@ -346,27 +307,91 @@ fn print_sni_list(domains: &mut Vec<String>, limit: Option<usize>) {
 //-----------------------------------------------------------------------------
 
 async fn db_build() {
-    // TODO:
-    // - download white domains list
-    // - resolve ip
-    // - resolve asn
-    // - save to file
-
     // request whitelisted domains
+    println!("Request whitelisted domains...");
     let domains_stream = cheburcheck::request_domains()
         .await
         .unwrap()
         .into_lines_stream();
 
     // request ips
+    println!("Resolve IPs...");
     let dns = dns::create_resolver();
     let mut resolved_domains_stream = dns::resolve_ips_stream(&dns, domains_stream);
 
+    // make a map of pairs ip-domain
+    let mut total_domains = 0u32;
+    let mut resolved_domains = 0u32;
+    let mut ip_domain: HashMap<IpAddr, Rc<String>> = HashMap::with_capacity(1000);
     while let Some(rs) = resolved_domains_stream.next().await {
-        // eprintln!("\rFailed to resolve IP for {domain} {e}");
-        //
+        total_domains += 1;
+        match rs {
+            Ok(info) => {
+                let (domain, ips) = info.into_parts();
+                let domain = Rc::new(domain);
+                for ip in ips {
+                    ip_domain.insert(ip, Rc::clone(&domain));
+                }
+                resolved_domains += 1;
+                // print!("\r  Resolved ip for {}", domain);
+            }
+            Err(e) => eprintln!("  Failed to resolve IP for {} {}", e.domain(), e.error()),
+        }
     }
-    // cymru::resolve_asn_batch(ips)
+
+    // resolve asns
+    println!("Resolve ASNs...");
+    let ip_info = cymru::resolve_asn_batch(ip_domain.keys()).await.unwrap();
+
+    // data processing
+    println!("Data processing...");
+    let asn_domain: HashSet<_> = ip_info
+        .into_iter()
+        .filter_map(|(ip, info)| {
+            let Some(domain) = ip_domain.remove(&ip) else {
+                println!("  Failed to get domain for ip {ip}");
+                return None;
+            };
+
+            Some((info.asn(), domain))
+        })
+        .collect();
+
+    // output
+    let resolved_asns = asn_domain.len();
+    let mut records = Vec::with_capacity(asn_domain.len());
+    records.extend(asn_domain);
+    records.sort_unstable();
+
+    println!("Writing asn.csv...");
+    write_asn_file(&records).unwrap();
+
+    println!();
+    println!("Done!");
+    println!();
+    println!("Summary:");
+    println!("  Whitelisted domains: {}", total_domains);
+    println!("  Resolved domains: {}", resolved_domains);
+    println!("  Resolved ASNs: {}", resolved_asns);
+
+    if !ip_domain.is_empty() {
+        println!();
+        println!("Unable to resolve ASN for the following domains:");
+        for (_, domain) in ip_domain {
+            println!("  {domain}");
+        }
+    }
+}
+
+fn write_asn_file(asn_domain: &[(u32, Rc<String>)]) -> Result<(), std::io::Error> {
+    let file = File::create("asn.csv")?;
+    let mut writer = BufWriter::new(file);
+    for (asn, domain) in asn_domain {
+        writeln!(writer, "{asn};{domain}")?;
+    }
+    println!();
+
+    Ok(())
 }
 
 // fn get_domains_list(path: impl AsRef<Path>) -> std::io::Result<Vec<String>> {
@@ -391,78 +416,78 @@ async fn db_build() {
 //     Ok(rs.into_iter().collect())
 // }
 
-async fn get_domain_info<T: AsRef<str> + Display>(
-    dns: &TokioResolver,
-    domains: &[T],
-) -> Result<(), Box<dyn std::error::Error>> {
-    // resolve ips
-    let capacity = domains.len();
-    // let mut ipset: HashMap<IpAddr, &str> = HashMap::with_capacity(capacity);
-
-    // let mut ips_buf = [IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)); 5];
-    // for domain in domains {
-    //     let Ok(ips) = resolve_ips(dns, domain.as_ref(), &mut ips_buf).await else {
-    //         println!("Failed to resolve ip for {domain}");
-    //         continue;
-    //     };
-    //
-    //     for ip in ips {
-    //         ipset.insert(*ip, domain.as_ref());
-    //     }
-    // }
-
-    let mut ipset: HashMap<IpAddr, Rc<String>> = HashMap::with_capacity(capacity);
-    let iter = domains.iter().map(|x| x.as_ref());
-    let mut ips_stream = resolve_ips_batch_stream(&dns, iter).await;
-    while let Some(rec) = ips_stream.next().await {
-        if let Ok(ips) = rec.ips {
-            let domain = Rc::new(rec.domain);
-            for ip in ips {
-                ipset.insert(ip, Rc::clone(&domain));
-            }
-        }
-    }
-
-    // resolve asns
-    let ips = ipset.keys();
-    let info = cymru::resolve_asn_batch(ips).await?;
-
-    // prepare report
-    let asns: HashSet<_> = info
-        .iter()
-        .filter_map(|(ip, info)| {
-            let Some(domain) = ipset.remove(ip) else {
-                println!("Failed to get domain for ip {ip}");
-                return None;
-            };
-
-            Some((info.get_asn(), domain))
-        })
-        .collect();
-
-    let mut report: Vec<_> = asns.into_iter().collect();
-    report.sort_unstable();
-
-    // output
-    let file = File::create("asn.csv")?;
-    let mut writer = BufWriter::new(file);
-    let mut buffer = String::with_capacity(256);
-    for (asn, domain) in report {
-        buffer.clear();
-        writeln!(&mut buffer, "{asn};{domain}")?;
-        std::io::Write::write_all(&mut writer, buffer.as_bytes())?;
-        print!("{buffer}");
-    }
-
-    for (_, domain) in ipset {
-        buffer.clear();
-        writeln!(&mut buffer, "N/A;{domain}")?;
-        std::io::Write::write_all(&mut writer, buffer.as_bytes())?;
-        println!("{buffer}");
-    }
-
-    Ok(())
-}
+// async fn get_domain_info<T: AsRef<str> + Display>(
+//     dns: &TokioResolver,
+//     domains: &[T],
+// ) -> Result<(), Box<dyn std::error::Error>> {
+//     // resolve ips
+//     let capacity = domains.len();
+//     // let mut ipset: HashMap<IpAddr, &str> = HashMap::with_capacity(capacity);
+//
+//     // let mut ips_buf = [IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)); 5];
+//     // for domain in domains {
+//     //     let Ok(ips) = resolve_ips(dns, domain.as_ref(), &mut ips_buf).await else {
+//     //         println!("Failed to resolve ip for {domain}");
+//     //         continue;
+//     //     };
+//     //
+//     //     for ip in ips {
+//     //         ipset.insert(*ip, domain.as_ref());
+//     //     }
+//     // }
+//
+//     let mut ipset: HashMap<IpAddr, Rc<String>> = HashMap::with_capacity(capacity);
+//     let iter = domains.iter().map(|x| x.as_ref());
+//     let mut ips_stream = dns::resolve_ips_batch_stream(&dns, iter).await;
+//     while let Some(rec) = ips_stream.next().await {
+//         if let Ok(ips) = rec.ip {
+//             let domain = Rc::new(rec.domain);
+//             for ip in ips {
+//                 ipset.insert(ip, Rc::clone(&domain));
+//             }
+//         }
+//     }
+//
+//     // resolve asns
+//     let ips = ipset.keys();
+//     let info = cymru::resolve_asn_batch(ips).await?;
+//
+//     // prepare report
+//     let asns: HashSet<_> = info
+//         .iter()
+//         .filter_map(|(ip, info)| {
+//             let Some(domain) = ipset.remove(ip) else {
+//                 println!("Failed to get domain for ip {ip}");
+//                 return None;
+//             };
+//
+//             Some((info.get_asn(), domain))
+//         })
+//         .collect();
+//
+//     let mut report: Vec<_> = asns.into_iter().collect();
+//     report.sort_unstable();
+//
+//     // output
+//     let file = File::create("asn.csv")?;
+//     let mut writer = BufWriter::new(file);
+//     let mut buffer = String::with_capacity(256);
+//     for (asn, domain) in report {
+//         buffer.clear();
+//         writeln!(&mut buffer, "{asn};{domain}")?;
+//         std::io::Write::write_all(&mut writer, buffer.as_bytes())?;
+//         print!("{buffer}");
+//     }
+//
+//     for (_, domain) in ipset {
+//         buffer.clear();
+//         writeln!(&mut buffer, "N/A;{domain}")?;
+//         std::io::Write::write_all(&mut writer, buffer.as_bytes())?;
+//         println!("{buffer}");
+//     }
+//
+//     Ok(())
+// }
 
 //
 // Tests

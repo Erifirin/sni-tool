@@ -132,7 +132,7 @@ impl IpInfo {
         }
     }
 
-    pub fn get_asn(&self) -> u32 {
+    pub fn asn(&self) -> u32 {
         return self.asn;
     }
 }
