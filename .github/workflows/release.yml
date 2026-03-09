@@ -2,6 +2,7 @@ name: Release
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build-and-upload:
@@ -41,16 +42,12 @@ jobs:
       - name: Archive artifacts
         shell: bash
         run: |
-      - name: Archive artifacts
-        shell: bash
-        run: |
           ASSET_NAME="${{ env.BINARY_NAME }}-${{ matrix.suffix }}"
-          RELEASE_DIR=$(pwd)/target/release
           
           if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            powershell Compress-Archive -Path "$RELEASE_DIR/${{ env.BINARY_NAME }}.exe" -DestinationPath "${{ github.workspace }}/${ASSET_NAME}.zip"
+            powershell Compress-Archive -Path "target/release/${{ env.BINARY_NAME }}.exe" -DestinationPath "${ASSET_NAME}.zip"
           else
-            tar -czvf "${{ github.workspace }}/${ASSET_NAME}.tar.gz" -C "$RELEASE_DIR" "${{ env.BINARY_NAME }}"
+            tar -czvf "${ASSET_NAME}.tar.gz" -C target/release "${{ env.BINARY_NAME }}"
           fi
 
       - name: Create Release
