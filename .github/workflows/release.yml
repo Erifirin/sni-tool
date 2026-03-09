@@ -20,36 +20,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read Cargo Metadata
-        id: cargo_metadata
-        uses: actions-utils/read-toml@v2
-        with:
-          file: 'Cargo.toml'
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Extract Cargo Metadata
+        shell: bash
+        run: |
+          RAW_METADATA=$(cargo metadata --no-deps --format-version 1)
+          PROJECT_NAME=$(echo $RAW_METADATA | jq -r '.packages[0].name')
+          PROJECT_VERSION=$(echo $RAW_METADATA | jq -r '.packages[0].version')
+          
+          echo "BINARY_NAME=$PROJECT_NAME" >> $GITHUB_ENV
+          echo "PROJECT_VERSION=$PROJECT_VERSION" >> $GITHUB_ENV
+          
       - name: Build
         run: cargo build --release
 
       - name: Archive artifacts
         shell: bash
         run: |
-          BINARY_NAME="${{ steps.cargo_metadata.outputs['package.name'] }}"
-          ASSET_NAME="${BINARY_NAME}-${{ matrix.suffix }}"
+          ASSET_NAME="${{ env.BINARY_NAME }}-${{ matrix.suffix }}"
           
           cd target/release
           if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            powershell Compress-Archive -Path "${BINARY_NAME}.exe" -DestinationPath "../../${ASSET_NAME}.zip"
+            powershell Compress-Archive -Path "${{ env.BINARY_NAME }}.exe" -DestinationPath "../../${ASSET_NAME}.zip"
           else
-            tar -czvf "../../${ASSET_NAME}.tar.gz" "${BINARY_NAME}"
+            tar -czvf "../../${ASSET_NAME}.tar.gz" "${{ env.BINARY_NAME }}"
           fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.cargo_metadata.outputs['package.version'] }}
-          name: Release v${{ steps.cargo_metadata.outputs['package.version'] }}
+          tag_name: v${{ env.PROJECT_VERSION }}
+          name: Release v${{ env.PROJECT_VERSION }}
           draft: true
           files: |
             *.tar.gz
