@@ -270,8 +270,6 @@ fn ls_wsni_batch(asns: impl IntoIterator<Item = u32>, limit: Option<usize>) {
         let domain = item.domain.to_string();
         if let Some(domains) = asn_domains.get_mut(&item.asn) {
             domains.push(domain);
-        } else {
-            asn_domains.insert(item.asn, vec![domain]);
         }
     })
     .unwrap();
