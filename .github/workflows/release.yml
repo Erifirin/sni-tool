@@ -1,0 +1,58 @@
+name: Release
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-upload:
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: linux-amd64
+          - os: windows-latest
+            suffix: windows-amd64
+          - os: macos-latest
+            suffix: macos-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read Cargo Metadata
+        id: cargo_metadata
+        uses: actions-utils/read-toml@v2
+        with:
+          file: 'Cargo.toml'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Archive artifacts
+        shell: bash
+        run: |
+          BINARY_NAME="${{ steps.cargo_metadata.outputs['package.name'] }}"
+          ASSET_NAME="${BINARY_NAME}-${{ matrix.suffix }}"
+          
+          cd target/release
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            powershell Compress-Archive -Path "${BINARY_NAME}.exe" -DestinationPath "../../${ASSET_NAME}.zip"
+          else
+            tar -czvf "../../${ASSET_NAME}.tar.gz" "${BINARY_NAME}"
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.cargo_metadata.outputs['package.version'] }}
+          name: Release v${{ steps.cargo_metadata.outputs['package.version'] }}
+          draft: true
+          files: |
+            *.tar.gz
+            *.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

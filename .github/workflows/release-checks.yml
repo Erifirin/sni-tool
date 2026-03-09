@@ -1,0 +1,49 @@
+name: Release Checks
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-and-verify:
+    name: Verify on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Нужно для доступа к тегам
+
+      - name: Check version uniqueness
+        if: matrix.os == 'ubuntu-latest' # Проверяем один раз на Linux, чтобы не дублировать
+        shell: bash
+        run: |
+          CURRENT_VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d '"' -f 2)
+          TAG_NAME="v$CURRENT_VERSION"
+          
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "❌ ERROR: Release $TAG_NAME already exists."
+            echo "Change project version in Cargo.toml"
+            exit 1
+          fi
+          
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Tests
+        run: cargo test
+
+#      - name: Lint Code
+#        run: cargo clippy -- -D warnings
+
+      - name: Check Release Build
+        run: cargo check --release
