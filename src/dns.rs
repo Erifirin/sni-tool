@@ -14,6 +14,51 @@ pub fn create_resolver() -> TokioResolver {
     .build()
 }
 
+pub struct ResolvedDomain {
+    domain: String,
+    ips: Vec<IpAddr>,
+}
+
+impl ResolvedDomain {
+    pub fn new(domain: String, ips: Vec<IpAddr>) -> Self {
+        Self { domain, ips }
+    }
+
+    pub fn domain(&self) -> &str {
+        &self.domain
+    }
+
+    pub fn ips(&self) -> &[IpAddr] {
+        &self.ips
+    }
+
+    pub fn into_parts(self) -> (String, Vec<IpAddr>) {
+        (self.domain, self.ips)
+    }
+}
+
+pub struct ResolvingError {
+    domain: String,
+    error: ResolveError,
+}
+
+impl ResolvingError {
+    pub fn domain(&self) -> &str {
+        &self.domain
+    }
+    pub fn error(&self) -> &ResolveError {
+        &self.error
+    }
+}
+
+impl From<ResolvingError> for ResolveError {
+    fn from(value: ResolvingError) -> Self {
+        value.error
+    }
+}
+
+//--------------------------------------------------
+
 pub async fn resolve_ips_to_vec(
     resolver: &TokioResolver,
     domain: &str,
@@ -62,6 +107,7 @@ fn normalize_domain_name_mut(domain: &mut String) {
     }
 }
 
+#[deprecated = "use ResolvedDomain instead."]
 pub struct IpResolveResult {
     pub domain: String,
     pub ips: Result<Vec<IpAddr>, ResolveError>,
@@ -105,23 +151,23 @@ pub async fn resolve_ips_batch(
 //     }
 // }
 
-pub async fn resolve_ips_batch_stream<I>(
-    resolver: &TokioResolver,
-    domains: I,
-) -> impl Stream<Item = IpResolveResult>
-where
-    I: Iterator,
-    I::Item: Into<String>,
-{
-    tokio_stream::iter(domains)
-        .map(move |domain| resolve_domain_ips(resolver, domain.into()))
-        .buffer_unordered(50)
-}
+// pub async fn resolve_ips_batch_stream<I>(
+//     resolver: &TokioResolver,
+//     domains: I,
+// ) -> impl Stream<Item = IpResolveResult>
+// where
+//     I: Iterator,
+//     I::Item: Into<String>,
+// {
+//     tokio_stream::iter(domains)
+//         .map(move |domain| resolve_domain_ips(resolver, domain.into()))
+//         .buffer_unordered(50)
+// }
 
 pub fn resolve_ips_stream<'a, S>(
     resolver: &'a TokioResolver,
     domains: S,
-) -> BoxStream<'a, IpResolveResult>
+) -> BoxStream<'a, Result<ResolvedDomain, ResolvingError>>
 where
     S: Stream<Item = Result<String, std::io::Error>> + Send + 'a,
 {
@@ -136,19 +182,19 @@ where
     Box::pin(rs)
 }
 
-async fn resolve_domain_ips(resolver: &TokioResolver, mut domain: String) -> IpResolveResult {
+async fn resolve_domain_ips(
+    resolver: &TokioResolver,
+    mut domain: String,
+) -> Result<ResolvedDomain, ResolvingError> {
     normalize_domain_name_mut(&mut domain);
-    // print!("\rResolve ip for {domain}");
     let lookup = resolver.lookup_ip(&domain).await;
-    let ip = match lookup {
-        Ok(ips) => Ok(ips.into_iter().collect::<Vec<_>>()),
-        Err(e) => {
-            // eprintln!("\rFailed to resolve IP for {domain} {e}");
-            Err(e)
-        }
-    };
-
-    IpResolveResult { domain, ips: ip }
+    match lookup {
+        Ok(ips) => Ok(ResolvedDomain {
+            domain,
+            ips: ips.into_iter().collect(),
+        }),
+        Err(e) => Err(ResolvingError { domain, error: e }),
+    }
 }
 
 // pub async fn resolve_ips_batch_parallel<I>(
