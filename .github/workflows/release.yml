@@ -19,6 +19,8 @@ jobs:
             suffix: windows-amd64
           - os: macos-latest
             suffix: macos-arm64
+          - os: macos-13
+            suffix: macos-amd64
 
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +28,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-build-${{ matrix.os }}"
+          
       - name: Extract Cargo Metadata
         shell: bash
         run: |
