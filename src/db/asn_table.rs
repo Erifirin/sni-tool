@@ -77,3 +77,10 @@ fn parse_line(line: &str) -> Result<AsnLine<'_>, ParserError> {
 
     Ok(AsnLine { asn, domain })
 }
+
+pub fn panic_on_error(e: ParserError) -> ! {
+    match e {
+        ParserError::Io(e) => panic!("Failed to read asn.csv\n{e}"),
+        ParserError::Parser(e) => panic!("Failed to parse asn.csv\n{e}"),
+    }
+}
