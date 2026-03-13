@@ -7,7 +7,7 @@ use crate::cheburcheck::error::Error;
 
 pub trait ResponseExt {
     fn into_lines_stream(self) -> impl Stream<Item = Result<String, Error>>;
-    fn into_vec(self) -> impl Future<Output = Result<Vec<String>, Error>>;
+    // fn into_vec(self) -> impl Future<Output = Result<Vec<String>, Error>>;
 }
 
 impl ResponseExt for reqwest::Response {
@@ -38,7 +38,7 @@ impl ResponseExt for reqwest::Response {
         })
     }
 
-    fn into_vec(self) -> impl Future<Output = Result<Vec<String>, Error>> {
-        async move { self.into_lines_stream().try_collect().await }
-    }
+    // fn into_vec(self) -> impl Future<Output = Result<Vec<String>, Error>> {
+    //     async move { self.into_lines_stream().try_collect().await }
+    // }
 }
