@@ -1,4 +1,7 @@
-use std::io::{BufRead, BufReader, Read};
+use std::{
+    fmt::{Display, Formatter, Result as FmtResult},
+    io::{BufRead, BufReader, Read},
+};
 
 pub struct LinesParser<R> {
     reader: BufReader<R>,
@@ -44,6 +47,15 @@ where
 impl From<std::io::Error> for ParserError {
     fn from(e: std::io::Error) -> Self {
         ParserError::Io(e)
+    }
+}
+
+impl Display for ParserError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            ParserError::Io(e) => write!(f, "IO error: {}", e),
+            ParserError::Parser(s) => write!(f, "parse error: {}", s),
+        }
     }
 }
 

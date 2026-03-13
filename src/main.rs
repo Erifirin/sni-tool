@@ -1,3 +1,4 @@
+use core::panic;
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
@@ -9,7 +10,12 @@ use std::{
 
 use clap::{Args, Parser, Subcommand};
 use futures::{StreamExt, future};
-use snitool::{cheburcheck, cymru, db, dns::DnsResolver, hackertarget};
+use snitool::{
+    cheburcheck, cymru,
+    db::{self},
+    dns::DnsResolver,
+    hackertarget,
+};
 
 /// CLI
 #[derive(Parser, Debug)]
@@ -246,7 +252,7 @@ fn ls_wsni(asn: Option<u32>, limit: Option<usize>) {
             domains.push(item.domain.to_string());
         }
     })
-    .unwrap();
+    .unwrap_or_else(|e| db::asn_table::panic_on_error(e));
 
     print_sni_list(&mut domains, limit);
 }
@@ -263,7 +269,7 @@ fn ls_wsni_batch(asns: impl IntoIterator<Item = u32>, limit: Option<usize>) {
             domains.push(domain);
         }
     })
-    .unwrap();
+    .unwrap_or_else(|e| db::asn_table::panic_on_error(e));
 
     for (asn, mut domains) in asn_domains {
         println!("ASN {}:", asn);
@@ -342,7 +348,9 @@ async fn db_build() {
 
     // resolve asns
     println!("Resolve ASNs...");
-    let ip_info = cymru::resolve_asn_batch(ip_domain.keys()).await.unwrap();
+    let ip_info = cymru::resolve_asn_batch(ip_domain.keys())
+        .await
+        .unwrap_or_else(|e| panic!("Failed to resolve ASN.\n{e}"));
 
     // data processing
     println!("Data processing...");
@@ -365,7 +373,8 @@ async fn db_build() {
     records.sort_unstable();
 
     println!("Writing asn.csv...");
-    write_asn_file(&records).unwrap();
+    write_asn_file(&records) //
+        .unwrap_or_else(|e| panic!("Failed to write asn.csv.\n{e}"));
 
     println!();
     println!("Done!");
