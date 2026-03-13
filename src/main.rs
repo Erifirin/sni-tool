@@ -8,14 +8,8 @@ use std::{
 };
 
 use clap::{Args, Parser, Subcommand};
-use tokio_stream::StreamExt;
-
-mod cheburcheck;
-mod cymru;
-mod db;
-mod dns;
-mod hackertarget;
-mod parsers;
+use futures::{StreamExt, future};
+use snitool::{cheburcheck, cymru, db, dns::DnsResolver, hackertarget};
 
 /// CLI
 #[derive(Parser, Debug)]
@@ -151,7 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 // Common
 //-----------------------------------------------------------------------------
 
-async fn resolve_target_ips(target: &str, limit: Option<usize>) -> Vec<IpAddr> {
+async fn resolve_target_ipset(target: &str, limit: Option<usize>) -> Vec<IpAddr> {
     if target.trim().is_empty() {
         panic!("No target to lookup.");
     }
@@ -163,22 +157,19 @@ async fn resolve_target_ips(target: &str, limit: Option<usize>) -> Vec<IpAddr> {
     resolve_ip(target, limit).await
 }
 
-async fn resolve_ip(domain: &str, limit: Option<usize>) -> Vec<IpAddr> {
-    let dns = dns::create_resolver();
-    let mut ips: Vec<IpAddr> = match limit {
-        Some(limit) => Vec::with_capacity(limit),
-        None => Vec::new(),
-    };
-
-    dns::resolve_ips_to_vec(&dns, domain, &mut ips, limit)
+async fn resolve_ip(domain: impl Into<String>, limit: Option<usize>) -> Vec<IpAddr> {
+    let dns = DnsResolver::new();
+    let ipset = dns
+        .resolve_ipset(domain, limit)
         .await
-        .unwrap_or_else(|e| panic!("Failed to resolve ip for domain '{domain}'.\n{e}"));
+        .unwrap_or_else(|e| panic!("Failed to resolve ip for domain '{}'.\n{}", e.domain(), e));
 
-    if ips.is_empty() {
-        panic!("No resolved ips for target '{domain}'.");
+    if ipset.is_empty() {
+        panic!("No resolved ips for target '{}'.", ipset.domain());
     }
 
-    ips
+    let (_, ipset) = ipset.into_parts();
+    ipset
 }
 
 async fn resolve_asns(ips: &[IpAddr]) -> HashSet<u32> {
@@ -225,7 +216,7 @@ async fn lookup_ip(domain: String, limit: Option<usize>) {
 //-----------------------------------------------------------------------------
 
 async fn lookup_asn(target: String, limit: Option<usize>) {
-    let ips = resolve_target_ips(&target, limit).await;
+    let ips = resolve_target_ipset(&target, limit).await;
     resolve_asns(&ips).await;
 }
 
@@ -234,7 +225,7 @@ async fn lookup_asn(target: String, limit: Option<usize>) {
 //-----------------------------------------------------------------------------
 
 async fn lookup_wsni(target: String, limit: Option<usize>) {
-    let ips = resolve_target_ips(&target, limit).await;
+    let ips = resolve_target_ipset(&target, limit).await;
     let asns = resolve_asns(&ips).await;
 
     println!();
@@ -305,17 +296,29 @@ fn print_sni_list(domains: &mut Vec<String>, limit: Option<usize>) {
 //-----------------------------------------------------------------------------
 
 async fn db_build() {
-    // request whitelisted domains
+    // create whitelisted domains stream
     println!("Request whitelisted domains...");
-    let domains_stream = cheburcheck::request_domains()
+    let cheburcheck = cheburcheck::Client::new();
+    let domains_stream = cheburcheck
+        .whitelisted_domains()
+        .into_stream()
         .await
-        .unwrap()
-        .into_lines_stream();
+        .unwrap_or_else(|e| panic!("  Failed to get whitelisted domains.\n{e}"))
+        .filter_map(|rs| {
+            let rs = match rs {
+                Ok(domain) => Some(domain),
+                Err(e) => {
+                    eprintln!("  Failed to read whitelisted domain data: {}", e);
+                    None
+                }
+            };
+            future::ready(rs)
+        });
 
-    // request ips
+    // create resolved ips stream
     println!("Resolve IPs...");
-    let dns = dns::create_resolver();
-    let mut resolved_domains_stream = dns::resolve_ips_stream(&dns, domains_stream);
+    let dns = DnsResolver::new();
+    let mut resolved_domains_stream = dns.resolve_ipset_from_stream(domains_stream).into_stream();
 
     // make a map of pairs ip-domain
     let mut total_domains = 0u32;
@@ -325,9 +328,9 @@ async fn db_build() {
         total_domains += 1;
         match rs {
             Ok(info) => {
-                let (domain, ips) = info.into_parts();
+                let (domain, ipset) = info.into_parts();
                 let domain = Rc::new(domain);
-                for ip in ips {
+                for ip in ipset {
                     ip_domain.insert(ip, Rc::clone(&domain));
                 }
                 resolved_domains += 1;

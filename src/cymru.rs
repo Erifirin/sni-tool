@@ -7,6 +7,45 @@ use tokio::{
 
 const CYMRU_WHOIS_URI: &str = "whois.cymru.com:43";
 
+// pub struct AsnResolver {
+//     // resolve_asn
+//     // resolve_asn_from_iter -> AsnIterResolver
+//     // resolve_asn_from_stream -> AsnStreamResolver
+// }
+//
+// struct AsnIter {
+//     // into_iter()
+//     // into_stream()
+// }
+//
+// pub trait AsnIterResolver {
+//     fn into_iter(self) -> impl Iterator<Item = IpInfo>;
+//     fn into_stream(self) ->
+// }
+
+#[derive(Debug)]
+pub struct IpInfo {
+    ip: IpAddr,
+    asn: u32,
+    asn_name: Option<String>,
+}
+
+impl IpInfo {
+    pub fn new(ip: IpAddr) -> Self {
+        Self {
+            ip,
+            asn: 0,
+            asn_name: None,
+        }
+    }
+
+    pub fn asn(&self) -> u32 {
+        return self.asn;
+    }
+}
+
+pub enum ResolvingError {}
+
 pub async fn resolve_asn_batch(
     ips: impl Iterator<Item = &IpAddr>,
 ) -> Result<HashMap<IpAddr, IpInfo>, Box<dyn std::error::Error>> {
@@ -114,27 +153,6 @@ fn parse_line(line: &str) -> Result<IpInfo, &str> {
     info.asn_name = name;
 
     Ok(info)
-}
-
-#[derive(Debug)]
-pub struct IpInfo {
-    ip: IpAddr,
-    asn: u32,
-    asn_name: Option<String>,
-}
-
-impl IpInfo {
-    pub fn new(ip: IpAddr) -> Self {
-        Self {
-            ip,
-            asn: 0,
-            asn_name: None,
-        }
-    }
-
-    pub fn asn(&self) -> u32 {
-        return self.asn;
-    }
 }
 
 // use tokio::fs::File;
