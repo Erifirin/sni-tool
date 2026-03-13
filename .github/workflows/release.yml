@@ -48,6 +48,7 @@ jobs:
           echo "PROJECT_VERSION=$PROJECT_VERSION" >> $GITHUB_ENV
           
       - name: Build
+        shell: bash
         run: |
           if [ -n "${{ matrix.target }}" ]; then
             cargo build --release --target ${{ matrix.target }}

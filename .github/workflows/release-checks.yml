@@ -60,6 +60,7 @@ jobs:
 #        run: cargo clippy -- -D warnings
 
       - name: Check Release Build
+        shell: bash
         run: |
           if [ -n "${{ matrix.target }}" ]; then
             cargo check --release --target ${{ matrix.target }}
