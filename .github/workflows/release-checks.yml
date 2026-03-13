@@ -5,11 +5,21 @@ on:
 
 jobs:
   test-and-verify:
-    name: Verify on ${{ matrix.os }}
+    name: Verify on ${{ matrix.suffix }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest, macos-13]
+        include:
+          - os: ubuntu-latest
+            suffix: linux-amd64
+          - os: windows-latest
+            suffix: windows-amd64
+          - os: macos-latest
+            suffix: macos-arm64
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            suffix: macos-intel-amd64
+            target: x86_64-apple-darwin
     
     steps:
       - uses: actions/checkout@v4
@@ -28,13 +38,12 @@ jobs:
             echo "Change project version in Cargo.toml"
             exit 1
           fi
-          
-      - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          targets: ${{ matrix.target }} # Устанавливаем нужный таргет для Mac
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -42,10 +51,18 @@ jobs:
           shared-key: "rust-build-${{ matrix.os }}"
           
       - name: Run Tests
+        # Запускаем тесты только если архитектура совпадает с хостом (не кросс-сборка)
+        # На Mac Intel (cross) тесты лучше пропустить, так как они не запустятся на M1
+        if: matrix.target != 'x86_64-apple-darwin'
         run: cargo test
 
 #      - name: Lint Code
 #        run: cargo clippy -- -D warnings
 
       - name: Check Release Build
-        run: cargo check --release
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            cargo check --release --target ${{ matrix.target }}
+          else
+            cargo check --release
+          fi
